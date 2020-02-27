@@ -568,6 +568,38 @@ def get_intf_ipv6_link_local_mode(ctx, interface_name, table_name):
     else:
         return ""
 
+def get_interface_vrf_name(config_db, interface_name):
+    """Get interface vrf name, return 'default' if not bind to vrf
+    """
+    table_name = get_interface_table_name(interface_name)
+    if table_name == "":
+        return "default"
+    entry = config_db.get_entry(table_name, interface_name)
+    if entry and entry.get("vrf_name"):
+        return entry.get("vrf_name")
+    return "default"
+
+def is_ipaddress_overlapped(interface_name, ip_addr):
+    """Check if the ip address overlapped with existing networks in the same vrf
+    """
+    config_db = ConfigDBConnector()
+    config_db.connect()
+    interface_dict = config_db.get_table('INTERFACE')
+    interface_dict.update(config_db.get_table('PORTCHANNEL_INTERFACE'))
+    interface_dict.update(config_db.get_table('VLAN_INTERFACE'))
+    interface_dict.update(config_db.get_table('LOOPBACK_INTERFACE'))
+    ip_network = ipaddress.ip_network(ip_addr, strict=False)
+
+    for key in interface_dict.keys():
+        if not isinstance(key, tuple):
+            continue
+        if ipaddress.ip_network(key[1], strict=False).overlaps(ip_network):
+            vrf_name_new = get_interface_vrf_name(config_db, interface_name)
+            vrf_name_exist = get_interface_vrf_name(config_db, key[0])
+            if vrf_name_new == vrf_name_exist:
+                return True
+    return False
+
 def _is_neighbor_ipaddress(config_db, ipaddress):
     """Returns True if a neighbor has the IP address <ipaddress>, False if not
     """
@@ -4847,6 +4879,8 @@ def add(ctx, interface_name, ip_addr, gw):
     table_name = get_interface_table_name(interface_name)
     if table_name == "":
         ctx.fail("'interface_name' is not valid. Valid names [Ethernet/PortChannel/Vlan/Loopback]")
+    if is_ipaddress_overlapped(interface_name, str(ip_address)):
+        ctx.fail("IP address {} overlaps with existing subnet".format(str(ip_address)))
     interface_entry = config_db.get_entry(table_name, interface_name)
     if len(interface_entry) == 0:
         if table_name == "VLAN_SUB_INTERFACE":
