@@ -2137,6 +2137,174 @@ def peer(db, peer_ip):
 
     click.echo(tabulate(bfd_body, bfd_headers))
 
+#
+# ' qos' command ("show qos ...")
+#
+@cli.group()
+@click.pass_context
+def qos(ctx):
+    '''Show details of the QoS'''
+    config_db = ConfigDBConnector()
+    config_db.connect()
+    app_db = ConfigDBConnector()
+    app_db.db_connect(app_db.APPL_DB)
+    state_db = ConfigDBConnector()
+    state_db.db_connect(state_db.STATE_DB)
+    ctx.obj = {'config_db': config_db, 'app_db': app_db, 'state_db': state_db}
+    pass
+
+def get_key(table, entry):
+    if entry == None:
+        return entry
+
+    match = re.search('^\[{}\|([\w\s\S]*)\]$'.format(table), entry)
+    if match == None:
+        return entry
+
+    return match.group(1)
+
+# 'qos interface' command ("show qos interface")
+@qos.command('interface')
+@click.pass_context
+def interface_qos(ctx):
+    '''Show Interface QoS'''
+
+    config_db = ctx.obj['config_db']
+
+    header = ['Interface', 'Ingress Port Rate Limit', 'Egress Port Rate Limit']
+    body = []
+    port_qos_map_data = config_db.get_table('PORT_QOS_MAP')
+    port_qos_map_keys = natsorted(port_qos_map_data.keys())
+
+    for k in port_qos_map_keys:
+        ing_scheduler_prof = port_qos_map_data[k].get('ing_scheduler', None)
+
+        egr_scheduler_prof = port_qos_map_data[k].get('egr_scheduler', None)
+        if egr_scheduler_prof == None:
+            egr_scheduler_prof = port_qos_map_data[k].get('scheduler', None)
+
+        ing_scheduler_prof = get_key('SCHEDULER', ing_scheduler_prof)
+        egr_scheduler_prof = get_key('SCHEDULER', egr_scheduler_prof)
+
+        if ing_scheduler_prof or egr_scheduler_prof:
+            body.append([k, ing_scheduler_prof, egr_scheduler_prof])
+
+    click.echo(tabulate(body, header))
+
+    header = ['Interface', 'Queue', 'Rate Limit']
+    body = []
+    queue_data = config_db.get_table('QUEUE')
+    queue_keys = natsorted(queue_data.keys())
+
+    for k in queue_keys:
+        scheduler_prof = queue_data[k].get('scheduler', None)
+
+        if scheduler_prof:
+            interface_name = k[0]
+            queue = k[1]
+            body.append([interface_name, queue, scheduler_prof])
+
+    if len(body) != 0:
+        click.echo('\n')
+        click.echo(tabulate(body, header))
+
+def convert_bytes_per_second_to_display_string(value):
+    value = value * 8
+    if value < 1000:
+        return '{} bps'.format(value)
+
+    value = value // 1000
+    if value % 1000:
+        return '{} kbps'.format(format(value, ',d'))
+
+    value = value // 1000
+    if value % 1000:
+        return '{} Mbps'.format(format(value, ',d'))
+
+    value = value // 1000
+    return '{} Gbps'.format(format(value, ',d'))
+
+#
+# 'scheduler' command ("show scheduler ")
+#
+@cli.command('scheduler')
+@click.argument('sched_name', required=False)
+@clicommon.pass_db
+def scheduler(db, sched_name):
+    '''Show scheduler configuration'''
+
+    config_db = db.cfgdb
+    ctx = click.get_current_context()
+
+    header = ['Name', 'Scheduling Type', 'Weight', 'Shaper Type', 'Bandwidth', ]
+    body = []
+    if sched_name == None:
+        scheduler_data = config_db.get_table('SCHEDULER')
+        scheduler_keys = natsorted(scheduler_data.keys())
+
+        for k in scheduler_keys:
+            if 'rate_limit' in k:
+                continue
+
+            meter_type = scheduler_data[k].get('meter_type')
+            pir = scheduler_data[k].get('pir')
+
+            if meter_type == 'bytes':
+                pir = convert_bytes_per_second_to_display_string(int(pir))
+            elif meter_type == 'packets':
+                pir = '{} pps'.format(format(int(pir), ',d'))
+
+            body.append([k, scheduler_data[k].get('type'), scheduler_data[k].get('weight'), meter_type, pir])
+    else:
+        data = config_db.get_entry('SCHEDULER', sched_name)
+        if len(data) != 0:
+            body.append([sched_name, data.get('type'), data.get('weight'), data.get('meter_type'), data.get('pir'), data.get('pbs')])
+        else:
+            ctx.fail("Scheduler {} not found".format(sched_name))
+
+    click.echo(tabulate(body, header, missingval="N/A", stralign='left'))
+
+#
+# 'protocol-down' command ("show protocol-down")
+#
+@cli.group('protocol-down')
+def protocol_down():
+    """ show protocol-down """
+    pass
+
+@protocol_down.command('status')
+@click.argument('interfacename', required=False)
+def protocol_down_status(interfacename):
+    """Show protocol-down status"""
+
+    cmd = ['intfutil', '-c', 'protocol_down']
+
+    if interfacename is not None:
+        if clicommon.get_interface_naming_mode() == "alias":
+            interfacename = iface_alias_converter.alias_to_name(interfacename)
+
+    if interfacename is not None:
+        cmd += ['-i', str(interfacename)]
+
+    run_command(cmd)
+
+
+@protocol_down.command('brief')
+@click.argument('interfacename', required=False)
+def protocol_down_brief(interfacename):
+    """Show protocol-down brief"""
+
+    cmd = ['intfutil', '-c', 'protocol_down_brief']
+
+    if interfacename is not None:
+        if clicommon.get_interface_naming_mode() == "alias":
+            interfacename = iface_alias_converter.alias_to_name(interfacename)
+
+    if interfacename is not None:
+        cmd += ['-i', str(interfacename)]
+
+    run_command(cmd)
+
 
 # Load plugins and register them
 helper = util_base.UtilHelper()

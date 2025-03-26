@@ -12,6 +12,10 @@ class Db(object):
         self.cfgdb.connect()
         self.cfgdb_pipe = ConfigDBPipeConnector()
         self.cfgdb_pipe.connect()
+        self.appldb = ConfigDBConnector()
+        self.appldb.db_connect(self.appldb.APPL_DB)
+        self.statedb = ConfigDBConnector()
+        self.statedb.db_connect(self.statedb.STATE_DB)
         self.db = SonicV2Connector(host="127.0.0.1")
 
         # Skip connecting to chassis databases in line cards
