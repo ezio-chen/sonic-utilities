@@ -37,7 +37,10 @@ import utilities_common.cli as clicommon
 from utilities_common.helper import get_port_pbh_binding, get_port_acl_binding, update_config
 from utilities_common.general import load_db_config, load_module_from_source
 from .validated_config_db_connector import ValidatedConfigDBConnector
+import utilities_common.asic_info as asic_info
 import utilities_common.multi_asic as multi_asic_util
+import utilities_common.config_util as config_util
+
 
 from .utils import log
 
@@ -788,6 +791,7 @@ def _clear_qos(delay=False, verbose=False):
             'MAP_PFC_PRIORITY_TO_QUEUE',
             'TC_TO_QUEUE_MAP',
             'DSCP_TO_TC_MAP',
+            'DOT1P_TO_TC_MAP',
             'MPLS_TC_TO_TC_MAP',
             'SCHEDULER',
             'PFC_PRIORITY_TO_PRIORITY_GROUP_MAP',
@@ -1769,7 +1773,7 @@ def load_minigraph(db, no_service_restart, traffic_shift_away, override_config, 
                 cfggen_namespace_option = ['-n', str(namespace)]
             clicommon.run_command([db_migrator, '-o', 'set_version'] + cfggen_namespace_option)
 
-    # Keep device isolated with TSA 
+    # Keep device isolated with TSA
     if traffic_shift_away:
         clicommon.run_command(["TSA"], display_cmd=True)
         if override_config:
@@ -2033,7 +2037,7 @@ def synchronous_mode(sync_mode):
     if ADHOC_VALIDATION:
         if sync_mode != 'enable' and sync_mode != 'disable':
             raise click.BadParameter("Error: Invalid argument %s, expect either enable or disable" % sync_mode)
-        
+
     config_db = ValidatedConfigDBConnector(ConfigDBConnector())
     config_db.connect()
     try:
@@ -2041,7 +2045,7 @@ def synchronous_mode(sync_mode):
     except ValueError as e:
         ctx = click.get_current_context()
         ctx.fail("Error: Invalid argument %s, expect either enable or disable" % sync_mode)
-    
+
     click.echo("""Wrote %s synchronous mode into CONFIG_DB, swss restart required to apply the configuration: \n
     Option 1. config save -y \n
               config reload -y \n
@@ -2049,7 +2053,7 @@ def synchronous_mode(sync_mode):
 
 #
 # 'yang_config_validation' command ('config yang_config_validation ...')
-# 
+#
 @config.command('yang_config_validation')
 @click.argument('yang_config_validation', metavar='<enable|disable>', required=True)
 def yang_config_validation(yang_config_validation):
@@ -2095,7 +2099,7 @@ def portchannel(db, ctx, namespace):
 @click.pass_context
 def add_portchannel(ctx, portchannel_name, min_links, fallback, fast_rate):
     """Add port channel"""
-    
+
     fvs = {
         'admin_status': 'up',
         'mtu': '9100',
@@ -2107,7 +2111,7 @@ def add_portchannel(ctx, portchannel_name, min_links, fallback, fast_rate):
         fvs['min_links'] = str(min_links)
     if fallback != 'false':
         fvs['fallback'] = 'true'
-    
+
     db = ValidatedConfigDBConnector(ctx.obj['db'])
     if ADHOC_VALIDATION:
         if is_portchannel_name_valid(portchannel_name) != True:
@@ -2115,18 +2119,18 @@ def add_portchannel(ctx, portchannel_name, min_links, fallback, fast_rate):
                     .format(portchannel_name, CFG_PORTCHANNEL_PREFIX, CFG_PORTCHANNEL_NO))
         if is_portchannel_present_in_db(db, portchannel_name):
             ctx.fail("{} already exists!".format(portchannel_name)) # TODO: MISSING CONSTRAINT IN YANG MODEL
-    
+
     try:
         db.set_entry('PORTCHANNEL', portchannel_name, fvs)
     except ValueError:
         ctx.fail("{} is invalid!, name should have prefix '{}' and suffix '{}'".format(portchannel_name, CFG_PORTCHANNEL_PREFIX, CFG_PORTCHANNEL_NO))
- 
+
 @portchannel.command('del')
 @click.argument('portchannel_name', metavar='<portchannel_name>', required=True)
 @click.pass_context
 def remove_portchannel(ctx, portchannel_name):
     """Remove port channel"""
-    
+
     db = ValidatedConfigDBConnector(ctx.obj['db'])
     if ADHOC_VALIDATION:
         if is_portchannel_name_valid(portchannel_name) != True:
@@ -2144,7 +2148,7 @@ def remove_portchannel(ctx, portchannel_name):
 
         if len([(k, v) for k, v in db.get_table('PORTCHANNEL_MEMBER') if k == portchannel_name]) != 0: # TODO: MISSING CONSTRAINT IN YANG MODEL
             ctx.fail("Error: Portchannel {} contains members. Remove members before deleting Portchannel!".format(portchannel_name))
-    
+
     try:
         db.set_entry('PORTCHANNEL', portchannel_name, None)
     except JsonPatchConflict:
@@ -2162,7 +2166,7 @@ def portchannel_member(ctx):
 def add_portchannel_member(ctx, portchannel_name, port_name):
     """Add member to port channel"""
     db = ValidatedConfigDBConnector(ctx.obj['db'])
-    
+
     if ADHOC_VALIDATION:
         if clicommon.is_port_mirror_dst_port(db, port_name):
             ctx.fail("{} is configured as mirror destination port".format(port_name)) # TODO: MISSING CONSTRAINT IN YANG MODEL
@@ -2179,7 +2183,7 @@ def add_portchannel_member(ctx, portchannel_name, port_name):
         # Dont proceed if the port channel does not exist
         if is_portchannel_present_in_db(db, portchannel_name) is False:
             ctx.fail("{} is not present.".format(portchannel_name))
- 
+
         # Don't allow a port to be member of port channel if it is configured with an IP address
         for key,value in db.get_table('INTERFACE').items():
             if type(key) == tuple:
@@ -2217,7 +2221,7 @@ def add_portchannel_member(ctx, portchannel_name, port_name):
                     member_port_speed = member_port_entry.get(PORT_SPEED)
 
                     port_speed = port_entry.get(PORT_SPEED) # TODO: MISSING CONSTRAINT IN YANG MODEL
-                    if member_port_speed != port_speed: 
+                    if member_port_speed != port_speed:
                         ctx.fail("Port speed of {} is different than the other members of the portchannel {}"
                                  .format(port_name, portchannel_name))
 
@@ -2290,7 +2294,7 @@ def del_portchannel_member(ctx, portchannel_name, port_name):
         # Dont proceed if the the port is not an existing member of the port channel
         if not is_port_member_of_this_portchannel(db, port_name, portchannel_name):
             ctx.fail("{} is not a member of portchannel {}".format(port_name, portchannel_name))
-    
+
     try:
         db.set_entry('PORTCHANNEL_MEMBER', portchannel_name + '|' + port_name, None)
     except JsonPatchConflict:
@@ -2477,7 +2481,7 @@ def add_erspan(session_name, src_ip, dst_ip, dscp, ttl, gre_type, queue, policer
     if not namespaces['front_ns']:
         config_db = ValidatedConfigDBConnector(ConfigDBConnector())
         config_db.connect()
-        if ADHOC_VALIDATION: 
+        if ADHOC_VALIDATION:
             if validate_mirror_session_config(config_db, session_name, None, src_port, direction) is False:
                 return
         try:
@@ -2753,6 +2757,280 @@ def reload(ctx, dry_run, json_data):
 def qos(ctx):
     """QoS-related configuration tasks"""
     pass
+
+def _convert_rate(meter_type, cfg_rate):
+    unit_abbrs = {
+        'k' : 1000,
+        'm' : 1000000,
+        'g' : 1000000000
+    }
+    rate = 0
+    max_rate = 800000000000 # bps, 800gbps
+
+    if cfg_rate == None:
+        return None
+    elif cfg_rate == '0':
+        raise click.BadParameter('The minimum value of rate needs to be greater than 0.')
+
+    if meter_type != 'bytes':
+        match = re.match(r'(\d+)$', cfg_rate)
+        if match == None:
+            raise click.BadParameter('Format of rate is wrong.')
+        rate = cfg_rate
+    else:
+        match = re.match(r'(\d+)([kmg]?)$', cfg_rate)
+        if match == None:
+            raise click.BadParameter('Format of rate is wrong.')
+        _num = match.group(1)
+        _unit = match.group(2) if match.group(2) else 'k'
+        rate = int(_num) * unit_abbrs.get(_unit, 1)
+
+        if max_rate < rate:
+            raise click.BadParameter('{} exceeds maximum rate.'.format(cfg_rate))
+
+    return str(rate)
+
+def _convert_burst_size(meter_type, cfg_burst_size):
+    unit_abbrs = {
+        'k' : 1024,
+        'm' : 1048576
+    }
+    burst_size = 0
+    max_burst_size = 268369875 # (bytes), 2,146,959 Kbits
+
+    if cfg_burst_size == None:
+        return None
+
+    if meter_type != 'bytes':
+        match = re.match(r'(\d+)$', cfg_burst_size)
+        if match == None:
+            raise click.BadParameter('Format of rate is wrong.')
+        burst_size = cfg_burst_size
+    else:
+        match = re.match(r'(\d+)([km]?)$', cfg_burst_size)
+        if match == None:
+            raise click.BadParameter('Format of rate is wrong.')
+        _num = match.group(1)
+        _unit = match.group(2) if match.group(2) else ''
+        burst_size = int(_num) * unit_abbrs.get(_unit, 1)
+
+        if max_burst_size < burst_size:
+            raise click.BadParameter('{} exceeds maximum burst size {}.'.format(burst_size,
+                                                                                max_burst_size))
+
+    return str(burst_size)
+
+#
+# 'qos scheduler' group ('config qos scheduler ...')
+#
+@config.group(cls=clicommon.AbbreviationGroup)
+@click.pass_context
+def scheduler(ctx):
+    """QoS-Scheduler-related configuration tasks"""
+    pass
+
+
+def get_scheduler_rate_range(type):
+    asic = asic_info.get_asic_info()
+    if type == 'packets':
+        if asic.is_th3:
+            maximum_rate = 400 * (1000**2)
+            minimum_rate = 32
+        elif asic.is_th4 or asic.is_td4:
+            maximum_rate = 419430400
+            minimum_rate = 2
+        elif asic.is_th5:
+            maximum_rate = 838860800
+            minimum_rate = 2
+        else:
+            maximum_rate = 100 * (1000**2)
+            minimum_rate = 8
+    else:
+        if asic.is_th3 or asic.is_th4 or asic.is_td4:
+            maximum_rate = 400 * (1000**3) # 400G
+            minimum_rate = 32000
+        elif asic.is_th5:
+            maximum_rate = 800 * (1000**3) # 800G
+            minimum_rate = 32000
+        else:
+            maximum_rate = 100 * (1000**3) # 100G
+            minimum_rate = 8000
+
+    return minimum_rate, maximum_rate
+
+
+def get_scheduler_burst_range(type):
+    asic = asic_info.get_asic_info()
+
+    if type == 'packets':
+        if asic.is_th4 or asic.is_th5 or asic.is_td4:
+            maximum_size = 1048576
+            minimum_size = 1
+        else:
+            maximum_size = 1000 * 1000
+            minimum_size = 2
+    else:
+        if asic.is_th4 or asic.is_th5 or asic.is_td4:
+            maximum_size = 131072000
+            minimum_size = 2000
+
+            # Keep the original config until the following value had verified.
+            # Multiple 125 is using to convert kbit to Bytes (1000/8)
+            # maximum_size = (8*128*1024) * 125
+            # minimum_size = 2 * 125
+        else:
+            maximum_size = (1000**2) * 125
+            minimum_size = 2 * 125
+
+    return minimum_size, maximum_size
+
+
+def scheduler_params_update(ctx, data, sched_type, weight, meter_type, bandwidth):
+    if sched_type != None:
+        data['type'] = sched_type
+
+    if weight != None:
+        if sched_type == None:
+            ctx.fail("sched_type should be provided.")
+
+        if sched_type == 'STRICT':
+            ctx.fail("Weight is not supported for strict scheduler.");
+        else:
+            data['weight'] = weight
+
+    if meter_type != None and bandwidth != None:
+        bandwidth_val = int(bandwidth)
+        minimum_rate, maximum_rate = get_scheduler_rate_range(meter_type)
+
+        if maximum_rate < bandwidth_val or bandwidth_val < minimum_rate:
+            raise click.BadParameter('{} is not in the valid range of {} to {}.'.format(bandwidth_val,
+                                                                                        minimum_rate,
+                                                                                        maximum_rate))
+
+        minimum_rate, maximum_rate = get_scheduler_burst_range(meter_type)
+
+        pir = int(int(bandwidth)/8) if meter_type=='bytes' else int(bandwidth)
+        pbs = pir * 2 if pir * 2 < maximum_rate else maximum_rate
+
+        data['meter_type'] = meter_type
+        data['pir'] = str(pir)
+        data['pbs'] = str(pbs)
+    elif meter_type != None or bandwidth != None:
+        ctx.fail("meter_type/bandwidth all values should be provided.")
+
+@scheduler.command(name='add')
+@click.argument('profile_name', metavar='<profile_name>', required=True)
+@click.option('--sched_type', help='Scheduler type', type=click.Choice(['WRR', 'DWRR', 'STRICT']))
+@click.option('--weight', help='weight', type=click.IntRange(1, 100))
+@click.option('--shaper_type', help='Shaper type', type=click.Choice(['bytes', 'packets']))
+@click.option('--bandwidth', help='Maximum bandwidth rate in kbps or pps. If shaper-type is bytes, user can specify a decimal number followed by the abbreviation k (1000), m (1,000,000), or g (1,000,000,000)')
+@clicommon.pass_db
+def add(db, profile_name, sched_type, weight, shaper_type, bandwidth):
+    """Add QoS-Scheduler profile."""
+    config_db = db.cfgdb
+    ctx = click.get_current_context()
+
+    bandwidth = _convert_rate(shaper_type, bandwidth)
+
+    sched_entry = config_db.get_entry("SCHEDULER", profile_name)
+    if len(sched_entry) != 0:
+        ctx.fail("Scheduler '{}' already exists use update command.".format(profile_name))
+
+    version_info = device_info.get_sonic_version_info()
+    asic_type = version_info.get('asic_type')
+    if asic_type == 'barefoot':
+        if sched_type == None:
+            sched_type = 'DWRR'
+
+        if weight == None:
+            weight = 1
+
+    data = {}
+    scheduler_params_update(ctx, data, sched_type, weight, shaper_type, bandwidth)
+
+    if len(data) != 0:
+        config_db.set_entry("SCHEDULER", profile_name, data)
+
+@scheduler.command(name='update')
+@click.argument('profile_name', metavar='<profile_name>', required=True)
+@click.option('--sched_type', help='Scheduler type', type=click.Choice(['WRR', 'DWRR', 'STRICT']))
+@click.option('--weight', help='weight', type=click.IntRange(1, 100))
+@click.option('--shaper_type', help='Shaper type', type=click.Choice(['bytes', 'packets']))
+@click.option('--bandwidth', help='Maximum bandwidth rate in kbps or pps. If shaper-type is bytes, user can specify a decimal number followed by the abbreviation k (1000), m (1,000,000), or g (1,000,000,000)')
+@click.option('--no-shaping', default=False, is_flag=True, help="Disable the traffic shaping")
+@clicommon.pass_db
+def update(db, profile_name, sched_type, weight, shaper_type, bandwidth, no_shaping):
+    """Update QoS-Scheduler profile."""
+    config_db = db.cfgdb
+    ctx = click.get_current_context()
+
+    bandwidth = _convert_rate(shaper_type, bandwidth)
+
+    data = config_db.get_entry("SCHEDULER", profile_name)
+    if len(data) == 0:
+        ctx.fail("Scheduler '{}' doesn't exist.".format(profile_name))
+
+    '''
+    queue_table = config_db.get_table('QUEUE')
+    for k, v in queue_table.items():
+        if 'scheduler' in v:
+            scheduler = v.get('scheduler','')
+            found = True if scheduler.split('|')[1][:-1] == profile_name else False
+            if found:
+                ctx.fail('The profile is binding to queue, unbind from it first.')
+    '''
+    if no_shaping:
+        if 'meter_type' in data:
+            del data['meter_type']
+        if 'pir' in data:
+            del data['pir']
+        if 'pbs' in data:
+            del data['pbs']
+    else:
+        if sched_type == None and 'type' in data:
+            sched_type = data['type']
+
+        if sched_type == 'STRICT' and 'weight' in data:
+            del data['weight']
+
+        scheduler_params_update(ctx, data, sched_type, weight, shaper_type, bandwidth)
+
+    config_db.set_entry("SCHEDULER", profile_name, data)
+
+@scheduler.command(name='del')
+@click.argument('profile_name', metavar='<profile_name>', required=True)
+@clicommon.pass_db
+def delete(db, profile_name):
+    """Delete QoS-Scheduler profile."""
+    config_db = db.cfgdb
+    ctx = click.get_current_context()
+
+    sched_entry = config_db.get_entry("SCHEDULER", profile_name)
+    if len(sched_entry) == 0:
+        ctx.fail("Scheduler '{}' doesn't exist.".format(profile_name))
+
+    port_qos_table = config_db.get_table('PORT_QOS_MAP')
+    for k, v in port_qos_table.items():
+        if 'ing_scheduler' in v:
+            ing_scheduler = v.get('ing_scheduler','')
+            found = True if ing_scheduler == profile_name else False
+            if found:
+                ctx.fail('The profile is binding to interface, unbind from it first.')
+        elif 'scheduler' in v:
+            scheduler = v.get('scheduler','')
+            found = True if scheduler == profile_name else False
+            if found:
+                ctx.fail('The profile is binding to interface, unbind from it first.')
+
+    queue_table = config_db.get_table('QUEUE')
+    for k, v in queue_table.items():
+        if 'scheduler' in v:
+            scheduler = v.get('scheduler','')
+            found = True if scheduler == profile_name else False
+            if found:
+                ctx.fail('The profile is binding to queue, unbind from it first.')
+
+    config_db.set_entry("SCHEDULER", profile_name, None)
 
 @qos.command('clear')
 @click.option('--verbose', is_flag=True, help="Enable verbose output")
@@ -3442,7 +3720,7 @@ def del_community(db, community):
         if community not in snmp_communities:
             click.echo("SNMP community {} is not configured".format(community))
             sys.exit(1)
-    
+
     config_db = ValidatedConfigDBConnector(db.cfgdb)
     try:
         config_db.set_entry('SNMP_COMMUNITY', community, None)
@@ -4857,23 +5135,24 @@ def adjust_pfc_enable(ctx, db, interface_name, pg_map, add):
 #
 # 'buffer' subgroup ('config interface buffer ...')
 #
-@interface.group(cls=clicommon.AbbreviationGroup)
+@interface.group("buffer", cls=clicommon.AbbreviationGroup)
 @click.pass_context
-def buffer(ctx):
+def interface_buffer(ctx):
     """Set or clear buffer configuration"""
     config_db = ctx.obj["config_db"]
-    if not is_dynamic_buffer_enabled(config_db):
-        ctx.fail("This command can only be executed on a system with dynamic buffer enabled")
+    # if not is_dynamic_buffer_enabled(config_db):
+    #     ctx.fail("This command can only be executed on a system with dynamic buffer enabled")
 
 
 #
 # 'priority_group' subgroup ('config interface buffer priority_group ...')
 #
-@buffer.group(cls=clicommon.AbbreviationGroup)
+@interface_buffer.group(cls=clicommon.AbbreviationGroup)
 @click.pass_context
 def priority_group(ctx):
     """Set or clear buffer configuration"""
-    pass
+    if not is_dynamic_buffer_enabled(config_db):
+        ctx.fail("This command can only be executed on a system with dynamic buffer enabled")
 
 
 #
@@ -4927,11 +5206,12 @@ def remove_pg(db, interface_name, pg_map):
 #
 # 'queue' subgroup ('config interface buffer queue ...')
 #
-@buffer.group(cls=clicommon.AbbreviationGroup)
+@interface_buffer.group(cls=clicommon.AbbreviationGroup)
 @click.pass_context
 def queue(ctx):
     """Set or clear buffer configuration"""
-    pass
+    if not is_dynamic_buffer_enabled(config_db):
+        ctx.fail("This command can only be executed on a system with dynamic buffer enabled")
 
 
 #
@@ -4986,7 +5266,7 @@ def cable_length(ctx, interface_name, length):
 
     if not is_dynamic_buffer_enabled(config_db):
         ctx.fail("This command can only be supported on a system with dynamic buffer enabled")
-    
+
     if ADHOC_VALIDATION:
         # Check whether port is legal
         ports = config_db.get_entry("PORT", interface_name)
@@ -5077,6 +5357,129 @@ def tx_power(ctx, interface_name, tx_power):
         command = ['portconfig', '-p', str(interface_name), '-P', str(tx_power), '-n', str(ctx.obj['namespace'])]
 
     clicommon.run_command(command)
+
+def update_qos_map_interface(db, op, f_key, table_name, profile, interface_name):
+    config_db = db.cfgdb
+    ctx = click.get_current_context()
+    field_key = f_key
+
+    if interface_name.startswith("Ethernet") is False or interface_name_is_valid(config_db, interface_name) is False or VLAN_SUB_INTERFACE_SEPARATOR in interface_name:
+        ctx.fail("Interface name is invalid. Please enter a valid interface name!!")
+
+    if op == 'bind':
+        entry = config_db.get_entry(table_name, profile)
+        if len(entry) == 0:
+            ctx.fail("Profile '{}' doesn't exist.".format(profile))
+        data = { field_key: '{}'.format(profile)}
+        config_db.mod_entry('PORT_QOS_MAP', interface_name, data)
+    else:
+        cur_data = config_db.get_entry('PORT_QOS_MAP', interface_name)
+        if field_key not in cur_data.keys():
+            ctx.fail("'{}' profile is not configured on interface {}.".format(profile, interface_name))
+
+        del cur_data[field_key]
+        if len(cur_data) != 0:
+            config_db.set_entry('PORT_QOS_MAP', interface_name, cur_data)
+        else:
+            config_db.set_entry('PORT_QOS_MAP', interface_name, None)
+
+#
+# 'scheduler' subgroup ('config interface qos scheduler...')
+#
+
+@interface.group(cls=clicommon.AbbreviationGroup)
+@click.pass_context
+def scheduler(ctx):
+    """Set interface scheduler configuration"""
+    pass
+
+def update_profile_to_interface_queue(db, op, interface_name, profile_name, queue, field_type):
+    config_db = db.cfgdb
+    ctx = click.get_current_context()
+
+    interfaces = set()
+    if interface_name.lower() == "all":
+        port_table = config_db.get_table('PORT')
+        interfaces = set(port_table.keys())
+    else:
+        if (interface_name.startswith("Ethernet") is False or
+            interface_name_is_valid(config_db, interface_name) is False or
+            VLAN_SUB_INTERFACE_SEPARATOR in interface_name):
+
+            ctx.fail("Interface name is invalid. Please enter a valid interface name!!")
+        interfaces.add(interface_name)
+
+    for intf in interfaces:
+        if op == 'bind':
+            entry = config_db.get_entry('QUEUE', '{}|{}'.format(intf, queue))
+            if len(entry) != 0 and field_type in entry:
+                if entry[field_type] == '{}'.format(profile_name):
+                    # Do nothing for same profile
+                    continue
+
+                # Unbind old profile
+                del entry[field_type]
+                config_db.set_entry('QUEUE', '{}|{}'.format(intf, queue),
+                                    None if len(entry) == 0 else entry)
+
+            entry[field_type] = '{}'.format(profile_name)
+            config_db.mod_entry('QUEUE', '{}|{}'.format(intf, queue), entry)
+        else:
+            entry = config_db.get_entry('QUEUE', '{}|{}'.format(intf, queue))
+            if len(entry) != 0 and field_type in entry:
+                if entry.get(field_type) != None:
+                    del entry[field_type]
+                    if len(entry) == 0:
+                        config_db.set_entry('QUEUE', '{}|{}'.format(intf, queue), None)
+                    else:
+                        config_db.set_entry('QUEUE', '{}|{}'.format(intf, queue), entry)
+                    continue
+
+            if interface_name != "all":
+                ctx.fail("{} '{}' is not bound to interface {} queue {}".format(field_type, profile_name, interface_name, queue))
+
+
+@scheduler.group('bind', cls=clicommon.AbbreviationGroup)
+@click.pass_context
+def scheduler_bind(ctx):
+    """interface bind scheduler configuration"""
+    pass
+
+@scheduler.group('unbind', cls=clicommon.AbbreviationGroup)
+@click.pass_context
+def scheduler_unbind(ctx):
+    """interface unbind scheduler configuration"""
+    pass
+
+@scheduler_bind.command('port')
+@click.argument('interface_name', metavar='<interface_name>', required=True)
+@click.argument('sched_policy_name', metavar='<sched_policy_name>', required=True)
+@clicommon.pass_db
+def bind_port(db, interface_name, sched_policy_name):
+    """scheduler policy configuration"""
+    update_qos_map_interface(db, 'bind', 'scheduler', 'SCHEDULER', sched_policy_name, interface_name)
+
+@scheduler_unbind.command('port')
+@click.argument('interface_name', metavar='<interface_name>', required=True)
+@clicommon.pass_db
+def unbind_port(db, interface_name):
+    """scheduler policy configuration"""
+    update_qos_map_interface(db, 'unbind', 'scheduler', 'SCHEDULER', None, interface_name)
+
+@scheduler_bind.command('queue')
+@click.argument('interface_name', metavar='{<interface_name>|all}', required=True)
+@click.argument('queue', metavar='<queue>', required=True, type=click.IntRange(0, 7))
+@click.argument('sched_policy_name', metavar='<sched_policy_name>', required=True)
+@clicommon.pass_db
+def bind_queue(db, interface_name, queue, sched_policy_name):
+    update_profile_to_interface_queue(db, 'bind', interface_name, sched_policy_name, queue, 'scheduler')
+
+@scheduler_unbind.command('queue')
+@click.argument('interface_name', metavar='{<interface_name>|all}', required=True)
+@click.argument('queue', metavar='<queue>', required=True, type=click.IntRange(0, 7))
+@clicommon.pass_db
+def unbind_queue(db, interface_name, queue):
+    update_profile_to_interface_queue(db, 'unbind', interface_name, None, queue, 'scheduler')
 
 #
 # 'lpmode' subcommand ('config interface transceiver lpmode ...')
@@ -5294,7 +5697,7 @@ def unbind(ctx, interface_name):
         config_db.set_entry(table_name, interface_name, subintf_entry)
     else:
         config_db.set_entry(table_name, interface_name, None)
-    
+
     click.echo("Interface {} IP disabled and address(es) removed due to unbinding VRF.".format(interface_name))
 #
 # 'ipv6' subgroup ('config interface ipv6 ...')
@@ -6073,183 +6476,24 @@ def buffer(ctx):
     config_db = ConfigDBConnector()
     config_db.connect()
 
-    if not is_dynamic_buffer_enabled(config_db):
-        ctx.fail("This command can only be supported on a system with dynamic buffer enabled")
+    # if not is_dynamic_buffer_enabled(config_db):
+    #     ctx.fail("This command can only be supported on a system with dynamic buffer enabled")
 
 
-@buffer.group(cls=clicommon.AbbreviationGroup)
+@buffer.group("profile", cls=clicommon.AbbreviationGroup, )
 @click.pass_context
-def profile(ctx):
+def buffer_profile(ctx):
     """Configure buffer profile"""
     pass
 
-
-@profile.command('add')
-@click.argument('profile', metavar='<profile>', required=True)
-@click.option('--xon', metavar='<xon>', type=int, help="Set xon threshold")
-@click.option('--xoff', metavar='<xoff>', type=int, help="Set xoff threshold")
-@click.option('--size', metavar='<size>', type=int, help="Set reserved size size")
-@click.option('--dynamic_th', metavar='<dynamic_th>', type=str, help="Set dynamic threshold")
-@click.option('--pool', metavar='<pool>', type=str, help="Buffer pool")
-@clicommon.pass_db
-def add_profile(db, profile, xon, xoff, size, dynamic_th, pool):
-    """Add or modify a buffer profile"""
-    config_db = db.cfgdb
-    ctx = click.get_current_context()
-
-    profile_entry = config_db.get_entry('BUFFER_PROFILE', profile)
-    if profile_entry:
-        ctx.fail("Profile {} already exist".format(profile))
-
-    update_profile(ctx, config_db, profile, xon, xoff, size, dynamic_th, pool)
-
-
-@profile.command('set')
-@click.argument('profile', metavar='<profile>', required=True)
-@click.option('--xon', metavar='<xon>', type=int, help="Set xon threshold")
-@click.option('--xoff', metavar='<xoff>', type=int, help="Set xoff threshold")
-@click.option('--size', metavar='<size>', type=int, help="Set reserved size size")
-@click.option('--dynamic_th', metavar='<dynamic_th>', type=str, help="Set dynamic threshold")
-@click.option('--pool', metavar='<pool>', type=str, help="Buffer pool")
-@clicommon.pass_db
-def set_profile(db, profile, xon, xoff, size, dynamic_th, pool):
-    """Add or modify a buffer profile"""
-    config_db = db.cfgdb
-    ctx = click.get_current_context()
-
-    profile_entry = config_db.get_entry('BUFFER_PROFILE', profile)
-    if not profile_entry:
-        ctx.fail("Profile {} doesn't exist".format(profile))
-
-    if not 'xoff' in profile_entry.keys() and xoff:
-        ctx.fail("Can't change profile {} from dynamically calculating headroom to non-dynamically one".format(profile))
-
-    update_profile(ctx, config_db, profile, xon, xoff, size, dynamic_th, pool, profile_entry)
-
-
-def _is_shared_headroom_pool_enabled(ctx, config_db):
-    ingress_lossless_pool = config_db.get_entry('BUFFER_POOL', 'ingress_lossless_pool')
-    if 'xoff' in ingress_lossless_pool:
-        return True
-
-    default_lossless_param_table = config_db.get_table('DEFAULT_LOSSLESS_BUFFER_PARAMETER')
-    if not default_lossless_param_table:
-        ctx.fail("Dynamic buffer calculation is enabled while no entry found in DEFAULT_LOSSLESS_BUFFER_PARAMETER table")
-    default_lossless_param = list(default_lossless_param_table.values())[0]
-    over_subscribe_ratio = default_lossless_param.get('over_subscribe_ratio')
-    if over_subscribe_ratio and over_subscribe_ratio != '0':
-        return True
-
-    return False
-
-
-def update_profile(ctx, config_db, profile_name, xon, xoff, size, dynamic_th, pool, profile_entry = None):
-    config_db = ValidatedConfigDBConnector(config_db)
-    params = {}
-    if profile_entry:
-        params = profile_entry
-
-    shp_enabled = _is_shared_headroom_pool_enabled(ctx, config_db)
-
-    if not pool:
-        pool = 'ingress_lossless_pool'
-    params['pool'] = pool
-    if not config_db.get_entry('BUFFER_POOL', pool):
-        ctx.fail("Pool {} doesn't exist".format(pool))
-
-    if xon:
-        params['xon'] = xon
-    else:
-        xon = params.get('xon')
-
-    if xoff:
-        params['xoff'] = xoff
-    else:
-        xoff = params.get('xoff')
-
-    if size:
-        params['size'] = size
-    else:
-        size = params.get('size')
-
-    dynamic_calculate = False if (xon or xoff or size) else True
-
-    if dynamic_calculate:
-        params['headroom_type'] = 'dynamic'
-        if not dynamic_th:
-            ctx.fail("Either size information (xon, xoff, size) or dynamic_th needs to be provided")
-        params['dynamic_th'] = dynamic_th
-    else:
-        if not xon:
-            ctx.fail("Xon is mandatory for non-dynamic profile")
-
-        if not xoff:
-            if shp_enabled:
-                ctx.fail("Shared headroom pool is enabled, xoff is mandatory for non-dynamic profile")
-            elif not size:
-                ctx.fail("Neither xoff nor size is provided")
-            else:
-                xoff_number = int(size) - int(xon)
-                if xoff_number <= 0:
-                    ctx.fail("The xoff must be greater than 0 while we got {} (calculated by: size {} - xon {})".format(xoff_number, size, xon))
-                params['xoff'] = str(xoff_number)
-
-        if not size:
-            if shp_enabled:
-                size = int(xon)
-            else:
-                size = int(xon) + int(xoff)
-            params['size'] = size
-
-        if dynamic_th:
-            params['dynamic_th'] = dynamic_th
-        elif not params.get('dynamic_th'):
-            # Fetch all the keys of default_lossless_buffer_parameter table
-            # and then get the default_dynamic_th from that entry (should be only one)
-            keys = config_db.get_keys('DEFAULT_LOSSLESS_BUFFER_PARAMETER')
-            if len(keys) != 1:
-                ctx.fail("Multiple entries are found in DEFAULT_LOSSLESS_BUFFER_PARAMETER while no dynamic_th specified")
-
-            default_lossless_param = config_db.get_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', keys[0])
-            if 'default_dynamic_th' in default_lossless_param:
-                params['dynamic_th'] = default_lossless_param['default_dynamic_th']
-            else:
-                ctx.fail("No dynamic_th defined in DEFAULT_LOSSLESS_BUFFER_PARAMETER")
-
-    try:
-        config_db.set_entry("BUFFER_PROFILE", (profile_name), params)
-    except ValueError as e:
-        ctx.fail("Invalid ConfigDB. Error: {}".format(e))
-
-@profile.command('remove')
-@click.argument('profile', metavar='<profile>', required=True)
-@clicommon.pass_db
-def remove_profile(db, profile):
-    """Delete a buffer profile"""
-    config_db = ValidatedConfigDBConnector(db.cfgdb)
-    ctx = click.get_current_context()
-
-    existing_pgs = config_db.get_table("BUFFER_PG")
-    for k, v in existing_pgs.items():
-        port, pg = k
-        referenced_profile = v.get('profile')
-        if referenced_profile and referenced_profile == profile:
-            ctx.fail("Profile {} is referenced by {}|{} and can't be removed".format(profile, port, pg))
-
-    entry = config_db.get_entry("BUFFER_PROFILE", profile)
-    if entry:
-        try:
-            config_db.set_entry("BUFFER_PROFILE", profile, None)
-        except JsonPatchConflict as e:
-            ctx.fail("Invalid ConfigDB. Error: {}".format(e))
-    else:
-        ctx.fail("Profile {} doesn't exist".format(profile))
 
 @buffer.group(cls=clicommon.AbbreviationGroup)
 @click.pass_context
 def shared_headroom_pool(ctx):
     """Configure buffer shared headroom pool"""
-    pass
+
+    if not is_dynamic_buffer_enabled(config_db):
+        ctx.fail("This command can only be supported on a system with dynamic buffer enabled")
 
 
 @shared_headroom_pool.command()
@@ -6484,7 +6728,7 @@ def add_loopback(ctx, loopback_name):
         lo_intfs = [k for k, v in config_db.get_table('LOOPBACK_INTERFACE').items() if type(k) != tuple]
         if loopback_name in lo_intfs:
             ctx.fail("{} already exists".format(loopback_name)) # TODO: MISSING CONSTRAINT IN YANG VALIDATION
-    
+
     try:
         config_db.set_entry('LOOPBACK_INTERFACE', loopback_name, {"NULL" : "NULL"})
     except ValueError:
@@ -6508,7 +6752,7 @@ def del_loopback(ctx, loopback_name):
     ips = [ k[1] for k in lo_config_db if type(k) == tuple and k[0] == loopback_name ]
     for ip in ips:
         config_db.set_entry('LOOPBACK_INTERFACE', (loopback_name, ip), None)
-    
+
     try:
         config_db.set_entry('LOOPBACK_INTERFACE', loopback_name, None)
     except JsonPatchConflict:
@@ -6566,9 +6810,9 @@ def ntp(ctx):
 def add_ntp_server(ctx, ntp_ip_address):
     """ Add NTP server IP """
     if ADHOC_VALIDATION:
-        if not clicommon.is_ipaddress(ntp_ip_address): 
+        if not clicommon.is_ipaddress(ntp_ip_address):
             ctx.fail('Invalid IP address')
-    db = ValidatedConfigDBConnector(ctx.obj['db'])    
+    db = ValidatedConfigDBConnector(ctx.obj['db'])
     ntp_servers = db.get_table("NTP_SERVER")
     if ntp_ip_address in ntp_servers:
         click.echo("NTP server {} is already configured".format(ntp_ip_address))
@@ -6579,7 +6823,7 @@ def add_ntp_server(ctx, ntp_ip_address):
                          {'resolve_as': ntp_ip_address,
                           'association_type': 'server'})
         except ValueError as e:
-            ctx.fail("Invalid ConfigDB. Error: {}".format(e)) 
+            ctx.fail("Invalid ConfigDB. Error: {}".format(e))
         click.echo("NTP server {} added to configuration".format(ntp_ip_address))
         try:
             click.echo("Restarting ntp-config service...")
@@ -6595,7 +6839,7 @@ def del_ntp_server(ctx, ntp_ip_address):
     if ADHOC_VALIDATION:
         if not clicommon.is_ipaddress(ntp_ip_address):
             ctx.fail('Invalid IP address')
-    db = ValidatedConfigDBConnector(ctx.obj['db'])    
+    db = ValidatedConfigDBConnector(ctx.obj['db'])
     ntp_servers = db.get_table("NTP_SERVER")
     if ntp_ip_address in ntp_servers:
         try:
@@ -6740,16 +6984,16 @@ def is_valid_sample_rate(rate):
 #
 # 'sflow interface' group
 #
-@sflow.group(cls=clicommon.AbbreviationGroup)
+@sflow.group('interface', cls=clicommon.AbbreviationGroup)
 @click.pass_context
-def interface(ctx):
+def sflow_interface(ctx):
     """Configure sFlow settings for an interface"""
     pass
 
 #
 # 'sflow' command ('config sflow interface enable  ...')
 #
-@interface.command()
+@sflow_interface.command()
 @click.argument('ifname', metavar='<interface_name>', required=True, type=str)
 @click.pass_context
 def enable(ctx, ifname):
@@ -6776,7 +7020,7 @@ def enable(ctx, ifname):
 #
 # 'sflow' command ('config sflow interface disable  ...')
 #
-@interface.command()
+@sflow_interface.command()
 @click.argument('ifname', metavar='<interface_name>', required=True, type=str)
 @click.pass_context
 def disable(ctx, ifname):
@@ -6804,7 +7048,7 @@ def disable(ctx, ifname):
 #
 # 'sflow' command ('config sflow interface sample-rate  ...')
 #
-@interface.command('sample-rate')
+@sflow_interface.command('sample-rate')
 @click.argument('ifname', metavar='<interface_name>', required=True, type=str)
 @click.argument('rate', metavar='<sample_rate>', required=True, type=str)
 @click.pass_context
@@ -6845,7 +7089,7 @@ def sample_rate(ctx, ifname, rate):
 #
 # 'sflow' command ('config sflow interface sample-direction  ...')
 #
-@interface.command('sample-direction')
+@sflow_interface.command('sample-direction')
 @click.argument('ifname', metavar='<interface_name>', required=True, type=str)
 @click.argument('direction', metavar='<sample_direction>', required=True, type=str)
 @click.pass_context
@@ -6923,19 +7167,19 @@ def add(ctx, name, ipaddr, port, vrf):
     if not is_valid_collector_info(name, ipaddr, port, vrf):
         return
 
-    config_db = ValidatedConfigDBConnector(ctx.obj['db']) 
+    config_db = ValidatedConfigDBConnector(ctx.obj['db'])
     collector_tbl = config_db.get_table('SFLOW_COLLECTOR')
 
     if (collector_tbl and name not in collector_tbl and len(collector_tbl) == 2):
         click.echo("Only 2 collectors can be configured, please delete one")
         return
-    
+
     try:
         config_db.mod_entry('SFLOW_COLLECTOR', name,
                             {"collector_ip": ipaddr,  "collector_port": port,
                              "collector_vrf": vrf})
     except ValueError as e:
-        ctx.fail("Invalid ConfigDB. Error: {}".format(e)) 
+        ctx.fail("Invalid ConfigDB. Error: {}".format(e))
     return
 
 #
@@ -7268,7 +7512,7 @@ def add_subinterface(ctx, subinterface_name, vid):
     if vid is not None:
         subintf_dict.update({"vlan" : vid})
     subintf_dict.update({"admin_status" : "up"})
-    
+
     try:
         config_db.set_entry('VLAN_SUB_INTERFACE', subinterface_name, subintf_dict)
     except ValueError as e:
@@ -7373,7 +7617,6 @@ def date(date, time):
 
     date_time = f'{date} {time}'
     clicommon.run_command(['timedatectl', 'set-time', date_time])
-
 
 if __name__ == '__main__':
     config()

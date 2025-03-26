@@ -797,3 +797,123 @@ def fec_status(interfacename, namespace, display, verbose):
         cmd += ['-n', str(namespace)]
 
     clicommon.run_command(cmd, display_cmd=verbose)
+
+def convert_bytes_to_display_string(value):
+    if value < 1024:
+        return '{} Bytes'.format(value)
+
+    value = value // 1024
+    if value % 1024:
+        return '{} KiB'.format(format(value, ',d'))
+
+    value = value // 1024
+    if value % 1024:
+        return '{} MiB'.format(format(value, ',d'))
+
+    value = value // 1024
+    return '{} GiB'.format(format(value, ',d'))
+
+def convert_bytes_per_second_to_display_string(value):
+    value = value * 8
+    if value < 1000:
+        return '{} bps'.format(value)
+
+    value = value // 1000
+    if value % 1000:
+        return '{} kbps'.format(format(value, ',d'))
+
+    value = value // 1000
+    if value % 1000:
+        return '{} Mbps'.format(format(value, ',d'))
+
+    value = value // 1000
+    return '{} Gbps'.format(format(value, ',d'))
+
+def update_interface_scheduler_data(sched_data, qos_data, sched_intf_map, field, port, queue=None):
+    sched_profile = qos_data.get(field)
+    if sched_profile != None:
+        if port not in sched_intf_map:
+            sched_intf_map[port] = []
+
+        if sched_profile not in sched_data:
+            sched_intf_map[port].append(
+                {
+                    'type': 'Port' if queue == None else 'Queue',
+                    'queue': 'N/A' if queue == None else queue,
+                    'profile': sched_profile,
+                    'mode': 'N/A',
+                    'weight': 'N/A',
+                    'meter_type': 'N/A',
+                    'pir': 'N/A',
+                    'pbs': 'N/A'
+                }
+            )
+        else:
+            sched_intf_map[port].append(
+                {
+                    'type': 'Port' if queue == None else 'Queue',
+                    'queue': 'N/A' if queue == None else queue,
+                    'profile': sched_profile,
+                    'mode': sched_data[sched_profile].get('type'),
+                    'weight': sched_data[sched_profile].get('weight'),
+                    'meter_type': sched_data[sched_profile].get('meter_type'),
+                    'pir': sched_data[sched_profile].get('pir'),
+                    'pbs': sched_data[sched_profile].get('pbs')
+                }
+            )
+
+@interfaces.command('scheduler')
+@click.argument('interface_name', required=False)
+@clicommon.pass_db
+def scheduler(db, interface_name):
+    """Show Interface scheduler information"""
+    config_db = db.cfgdb
+    ctx = click.get_current_context()
+
+    sched_data = {}
+    data = config_db.get_table('SCHEDULER')
+    for key,data in data.items():
+        meter_type = data.get('meter_type', 'N/A')
+        pir = data.get('pir', '0')
+        pbs = data.get('pbs', '0')
+
+        if meter_type == 'bytes':
+            pir = convert_bytes_per_second_to_display_string(int(pir))
+        elif meter_type == 'packets':
+            pir = '{} pps'.format(format(int(pir), ',d'))
+
+        sched_data[key] = {
+            'type': data.get('type', 'N/A'),
+            'weight': data.get('weight', 'N/A'),
+            'meter_type': meter_type,
+            'pir': pir,
+            'pbs': pbs
+        }
+
+    sched_intf_map = {}
+    data = config_db.get_table('PORT_QOS_MAP')
+    for key,qos_data in data.items():
+        if interface_name == None or interface_name == key:
+            update_interface_scheduler_data(sched_data, qos_data, sched_intf_map, 'scheduler', key,)
+
+    data = config_db.get_table('QUEUE')
+    for key, qos_data in data.items():
+        port_name, q = key
+        if interface_name == None or interface_name == port_name:
+            if qos_data.get('scheduler') != None:
+                update_interface_scheduler_data(sched_data, qos_data, sched_intf_map, 'scheduler', port_name, q)
+
+    header = ['Type', 'Queue', 'Profile', 'Scheduling Mode', 'Weight', 'Shaper Type', 'Bandwidth']
+
+
+    #sched_intf_map = sorted(sched_intf_map.items())
+    for port_name in natsorted(list(sched_intf_map.keys())):
+        body = []
+        data = sched_intf_map[port_name]
+
+        for e in data:
+            body.append([e['type'], e['queue'], e['profile'], e['mode'],
+                        e['weight'], e['meter_type'], e['pir']])
+
+        click.echo(port_name)
+        click.echo(tabulate(body, header, stralign='left')+ '\n')

@@ -543,8 +543,8 @@ def run_command(command, display_cmd=False, ignore_error=False, return_cmd=False
 
     # No conversion needed for intfutil commands as it already displays
     # both SONiC interface name and alias name for all interfaces.
-    # IP route table cannot be handled in function run_command_in_alias_mode since it is in JSON format 
-    # with a list for next hops 
+    # IP route table cannot be handled in function run_command_in_alias_mode since it is in JSON format
+    # with a list for next hops
     if get_interface_naming_mode() == "alias" and not command_str.startswith("intfutil") and not re.search("show ip|ipv6 route", command_str):
         run_command_in_alias_mode(command, shell=shell)
         sys.exit(0)
@@ -617,6 +617,19 @@ def is_interface_in_config_db(config_db, interface_name):
 
     return True
 
+def get_traffic_manage_itm():
+    hwsku = device_info.get_hwsku()
+    if hwsku:
+        if hwsku.startswith('Accton-AS9736') or hwsku.startswith('Accton-AS9737') or hwsku.startswith('Accton-AS9817'):
+            return 2
+
+        if hwsku.startswith('Accton-MINIPACK') or hwsku.startswith('Accton-AS9716-32D') or hwsku.startswith('Accton-AS9726-32D'):
+            return 2
+
+        if hwsku.startswith('Accton-AS7816') or hwsku.startswith('Accton-AS7712'):
+            return 4
+
+    return 1
 
 class MutuallyExclusiveOption(click.Option):
     """
