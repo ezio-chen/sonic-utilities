@@ -230,7 +230,7 @@ class TestAaa(object):
 
         # test tacacs + local authorization
         result = runner.invoke(config.config.commands["aaa"],\
-                               ["authorization", "tacacs+ local"], obj=db)
+                               ["authorization", "tacacs+", "local"], obj=db)
         print(result.exit_code)
         print(result.output)
         assert result.exit_code == 0
@@ -258,7 +258,7 @@ class TestAaa(object):
 
         # test tacacs + local accounting
         result = runner.invoke(config.config.commands["aaa"],\
-                               ["accounting", "tacacs+ local"], obj=db)
+                               ["accounting", "tacacs+", "local"], obj=db)
         print(result.exit_code)
         print(result.output)
         assert result.exit_code == 0
