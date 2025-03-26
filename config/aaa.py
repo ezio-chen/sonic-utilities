@@ -149,44 +149,67 @@ def login(auth_protocol):
         add_table_kv('AAA', 'authentication', 'login', val)
 authentication.add_command(login)
 
+
 # cmd: aaa authorization
 @click.command()
-@click.argument('protocol', nargs=-1, type=click.Choice([ "tacacs+", "local", "tacacs+ local"]))
+@click.argument('protocol', nargs=-1, type=click.Choice([ "tacacs+", "local", "default"]))
 def authorization(protocol):
-    """Switch AAA authorization [tacacs+ | local | '\"tacacs+ local\"']"""
+    """
+    Switch AAA authorization default
+               authorization {tacacs+ | local} [local]
+    """
     if len(protocol) == 0:
         click.echo('Argument "protocol" is required')
         return
 
-    if len(protocol) == 1 and (protocol[0] == 'tacacs+' or protocol[0] == 'local'):
-        add_table_kv('AAA', 'authorization', 'login', protocol[0])
-    elif len(protocol) == 1 and protocol[0] == 'tacacs+ local':
-        add_table_kv('AAA', 'authorization', 'login', 'tacacs+,local')
-    else:
-        click.echo('Not a valid command')
+    if len(protocol) > 2:
+        click.fail('Only two "protocol" can be set at most')
+
+    if 'default' in protocol:
+        if len(protocol) >= 2:
+            click.fail('Invalidated parameter')
+
+        del_table_key('AAA', 'authorization', 'login')
+        return
+
+    if protocol[0] == 'local' and len(protocol) != 1:
+        click.fail('Invalidated parameter')
+
+    if len(protocol) != len(set(protocol)):
+        click.fail('Invalidated parameter')
+
+    add_table_kv('AAA', 'authorization', 'login', ','.join(protocol))
 aaa.add_command(authorization)
+
 
 # cmd: aaa accounting
 @click.command()
-@click.argument('protocol', nargs=-1, type=click.Choice(["disable", "tacacs+", "local", "tacacs+ local"]))
+@click.argument('protocol', nargs=-1, type=click.Choice(["disable", "tacacs+", "local"]))
 def accounting(protocol):
-    """Switch AAA accounting [disable | tacacs+ | local | '\"tacacs+ local\"']"""
+    """
+    Switch AAA accounting disable
+               accounting {tacacs+ | local} [tacacs+ | local]
+    """
     if len(protocol) == 0:
         click.echo('Argument "protocol" is required')
         return
 
-    if len(protocol) == 1:
-        if protocol[0] == 'tacacs+' or protocol[0] == 'local':
-            add_table_kv('AAA', 'accounting', 'login', protocol[0])
-        elif protocol[0] == 'tacacs+ local':
-            add_table_kv('AAA', 'accounting', 'login', 'tacacs+,local')
-        elif protocol[0] == 'disable':
-            del_table_key('AAA', 'accounting', 'login')
-        else:
-            click.echo('Not a valid command')
-    else:
-        click.echo('Not a valid command')
+    if len(protocol) > 2:
+        click.fail('Only two "protocol" can be set at most')
+
+    if 'disable' in protocol:
+        if len(protocol) >= 2:
+            click.fail('Invalidated parameter')
+
+        del_table_key('AAA', 'accounting', 'login')
+        return
+
+    if len(protocol) != len(set(protocol)):
+        click.fail('Invalidated parameter')
+
+    add_table_kv('AAA', 'accounting', 'login', ','.join(protocol))
 aaa.add_command(accounting)
+
 
 @click.group()
 def tacacs():
@@ -405,8 +428,9 @@ def sourceip(ctx, src_ip):
         click.echo('Invalid ip address')
         return
 
-    v6_invalid_list = [ipaddress.IPv6Address('0::0'), ipaddress.IPv6Address('0::1')]
-    net = ipaddress.ip_network(src_ip, strict=False)
+    v6_invalid_list = [ipaddress.IPv6Address(str('0::0')), ipaddress.IPv6Address(str('0::1'))]
+    net = ipaddress.ip_network(str(src_ip), strict=False)
+
     if (net.version == 4):
         if src_ip == "0.0.0.0":
             click.echo('enter non-zero ip address')
@@ -446,8 +470,9 @@ def nasip(ctx, nas_ip):
         click.echo('Invalid ip address')
         return
 
-    v6_invalid_list = [ipaddress.IPv6Address('0::0'), ipaddress.IPv6Address('0::1')]
-    net = ipaddress.ip_network(nas_ip, strict=False)
+    v6_invalid_list = [ipaddress.IPv6Address(str('0::0')), ipaddress.IPv6Address(str('0::1'))]
+    net = ipaddress.ip_network(str(nas_ip), strict=False)
+
     if (net.version == 4):
         if nas_ip == "0.0.0.0":
             click.echo('enter non-zero ip address')
