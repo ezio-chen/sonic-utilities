@@ -1682,5 +1682,7 @@
         "minimum_current": "339",
         "timestamp": "20230704 17:38:04",
         "warning_status": "False"
-    }
+    },
+    "STP_TABLE|GLOBAL": {
+        "max_stp_inst": "510"
 }

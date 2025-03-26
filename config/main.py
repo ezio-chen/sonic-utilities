@@ -61,6 +61,7 @@ from .config_mgmt import ConfigMgmtDPB, ConfigMgmt
 from . import mclag
 from . import syslog
 from . import dns
+from . import stp
 
 # mock masic APIs for unit test
 try:
@@ -1204,7 +1205,10 @@ config.add_command(nat.nat)
 config.add_command(vlan.vlan)
 config.add_command(vxlan.vxlan)
 
-#add mclag commands
+# add stp commands
+config.add_command(stp.spanning_tree)
+
+# add mclag commands
 config.add_command(mclag.mclag)
 config.add_command(mclag.mclag_member)
 config.add_command(mclag.mclag_unique_ip)
