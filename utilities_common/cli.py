@@ -16,6 +16,8 @@ from sonic_py_common import multi_asic
 from utilities_common.db import Db
 from utilities_common.general import load_db_config
 from sonic_py_common.general import getstatusoutput_noshell_pipe
+from sonic_py_common import device_info
+
 VLAN_SUB_INTERFACE_SEPARATOR = '.'
 
 pass_db = click.make_pass_decorator(Db, ensure=True)

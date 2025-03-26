@@ -7618,5 +7618,8 @@ def date(date, time):
     date_time = f'{date} {time}'
     clicommon.run_command(['timedatectl', 'set-time', date_time])
 
+from . import qos as qos_command
+
+qos_command.add_command(qos, interface)
 if __name__ == '__main__':
     config()
