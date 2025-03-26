@@ -917,3 +917,5 @@ def scheduler(db, interface_name):
 
         click.echo(port_name)
         click.echo(tabulate(body, header, stralign='left')+ '\n')
+from . import qos as qos_command
+qos_command.add_command(interfaces)
