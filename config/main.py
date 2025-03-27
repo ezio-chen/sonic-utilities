@@ -6210,6 +6210,20 @@ def parse_acl_table_info(table_name, table_type, description, ports, stage):
 
     return table_info
 
+
+def validate_services(ctx, param, value):
+    if value == None:
+        return None
+
+    service_list = value.split(',')
+
+    for s in service_list:
+        if s not in ['SSH', 'SNMP', 'NTP']:
+            raise click.BadParameter('{} is not a valid service.'.format(value))
+
+    return service_list
+
+
 #
 # 'table' subcommand ('config acl add table ...')
 #
@@ -6220,8 +6234,10 @@ def parse_acl_table_info(table_name, table_type, description, ports, stage):
 @click.option("-d", "--description")
 @click.option("-p", "--ports")
 @click.option("-s", "--stage", type=click.Choice(["ingress", "egress"]), default="ingress")
+@click.option("-S", "--services", metavar="<SSH|SNMP|NTP>",
+              callback=validate_services, help="List of services")
 @click.pass_context
-def table(ctx, table_name, table_type, description, ports, stage):
+def table(ctx, table_name, table_type, description, ports, stage, services):
     """
     Add ACL table
     """
@@ -6233,7 +6249,16 @@ def table(ctx, table_name, table_type, description, ports, stage):
     except ValueError as e:
         ctx.fail("Failed to parse ACL table config: exception={}".format(e))
 
+    if "CTRLPLANE" == table_type.upper():
+        if not services:
+            raise click.BadParameter('Option "--services" is required for CTRLPLANE.')
+
+        table_info["services@"] = ",".join(services)
+        table_info["type"] = "CTRLPLANE"
+        del table_info["ports"]
+
     config_db.set_entry("ACL_TABLE", table_name, table_info)
+
 
 #
 # 'remove' subgroup ('config acl remove ...')
