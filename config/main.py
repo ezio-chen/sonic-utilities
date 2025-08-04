@@ -264,15 +264,17 @@ def breakout_Ports(cm, delPorts=list(), portJson=dict(), force=False, \
             raise click.Abort()
         return
 
-def get_sai_version():
-    command = "docker exec syncd dpkg -l | grep libsaibcm | awk '{print $3}'"
-    proc = subprocess.Popen(command, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = proc.communicate()
+def is_community_brcm_sai():
+    # The Broadcom SAI package name can be determined from the installed image
+    # directory (/host/image-<image-version>), if it exists.
+    command = "find /host/image-`docker images | grep syncd-brcm | grep -v latest | awk '{print $2}'` -name \"*libsaibcm*\" 2>/dev/null | grep -e \"libsaibcm$\""
+    proc = subprocess.Popen(command, shell=True)
+    proc.communicate()
 
-    if proc.returncode != 0 or not stdout:
-        return ""
+    if proc.returncode != 0:
+        return False
 
-    return stdout.strip()
+    return True
 
 #
 # Helper functions
@@ -3245,20 +3247,22 @@ def reload(ctx, no_dynamic_buffer, no_delay, dry_run, json_data, ports, verbose)
             )
 
             #
-            # 2.0.0+6532+20250429-233 is ecSAI version.
-            # Only applying lossless buffer configuration on ecSAI platform.
+            # Skip applying buffer/QoS configuration on community Broadcom SAI.
             #
-            if os.path.isfile(qos_template_file) and get_sai_version().startswith("2.0.0"):
+            if not os.path.isfile(qos_template_file):
+                click.secho("QoS definition template not found at {}".format(
+                    qos_template_file
+                ), fg="yellow")
+            elif is_community_brcm_sai():
+                click.secho("The current platform does not support the provided buffer/QoS configuration.",
+                            fg="yellow")
+            else:
                 cmd_ns = [] if ns is DEFAULT_NAMESPACE else ['-n', str(ns)]
                 fname = "{}{}".format(dry_run, asic_id_suffix) if dry_run else "config-db"
                 command = [SONIC_CFGGEN_PATH] + cmd_ns + from_db + ['-t', '{},{}'.format(buffer_template_file, fname), '-t', '{},{}'.format(qos_template_file, fname), '-y', sonic_version_file]
                 # Apply the configurations only when both buffer and qos
                 # configuration files are present
                 clicommon.run_command(command, display_cmd=True)
-            else:
-                click.secho("QoS definition template not found at {}".format(
-                    qos_template_file
-                ), fg="yellow")
         else:
             click.secho("Buffer definition template not found at {}".format(
                 buffer_template_file
