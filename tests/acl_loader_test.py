@@ -225,20 +225,12 @@ class TestAclLoader(object):
         assert ('BMC_ACL_NORTHBOUND', 'DEFAULT_RULE') not in acl_loader.rules_info
         assert ('BMC_ACL_NORTHBOUND_V6', 'DEFAULT_RULE') not in acl_loader.rules_info
 
-    def test_egress_default_deny_rule(self, acl_loader):
+    def test_egress_no_default_deny_rule(self, acl_loader):
         acl_loader.rules_info = {}
         acl_loader.load_rules_from_file(os.path.join(test_path, 'acl_input/acl_egress.json'))
         print(acl_loader.rules_info)
-        assert acl_loader.rules_info[('DATAACL_3', 'DEFAULT_RULE')] == {
-            'PRIORITY': '1',
-            'PACKET_ACTION': 'DROP',
-            'ETHER_TYPE': '2048'
-        }
-        assert acl_loader.rules_info[('DATAACL_4', 'DEFAULT_RULE')] == {
-            'PRIORITY': '1',
-            'PACKET_ACTION': 'DROP',
-            'IP_TYPE': 'IPV6ANY'
-        }
+        assert ('DATAACL_3', 'DEFAULT_RULE') not in acl_loader.rules_info
+        assert ('DATAACL_4', 'DEFAULT_RULE') not in acl_loader.rules_info
 
     def test_icmp_type_lower_bound(self, acl_loader):
         with pytest.raises(ValueError):

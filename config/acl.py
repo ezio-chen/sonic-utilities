@@ -49,14 +49,28 @@ def get_acl_bound_ports(config_db):
 
     return list(ports)
 
-def get_acl_valid_vlans(config_db):
-    vlans = set()
 
-    vlan_dict = config_db.get_table("VLAN")
-    for key in vlan_dict:
-        vlans.add(key)
+def expand_vlan_ports(config_db, port_name):
+    """
+    Expands a given VLAN interface into its member ports.
 
-    return list(vlans)
+    If the provided interface is a VLAN, then this method will return its member ports.
+
+    If the provided interface is not a VLAN, then this method will return a list with only
+    the provided interface in it.
+    """
+    if port_name not in config_db.get_keys("VLAN"):
+        return [port_name]
+
+    vlan_members = config_db.get_keys("VLAN_MEMBER")
+
+    members = [member for vlan, member in vlan_members if port_name == vlan]
+
+    if not members:
+        raise ValueError("Cannot bind empty VLAN {}".format(port_name))
+
+    return members
+
 
 def parse_acl_table_info(ctx, table_name, table_type, description, ports, stage,
                          set_policer, config_db):
@@ -78,21 +92,17 @@ def parse_acl_table_info(ctx, table_name, table_type, description, ports, stage,
 
     port_list = []
     valid_acl_ports = get_acl_bound_ports(config_db)
-    valid_acl_vlans = get_acl_valid_vlans(config_db)
 
     if ports:
         for port in ports.split(","):
-            port_list.append(port)
-        port_list = set(port_list)
+            port_list += expand_vlan_ports(config_db, port)
+        port_list = list(set(port_list))  # convert to set first to remove duplicate ifaces
     else:
         port_list = valid_acl_ports
 
     for port in port_list:
-        if port not in valid_acl_ports and port not in valid_acl_vlans:
+        if port not in valid_acl_ports:
             ctx.fail("Cannot bind ACL to specified port {}".format(port))
-
-    if len(set(port_list) & set(valid_acl_ports)) > 0 and len(set(port_list) & set(valid_acl_vlans)) > 0:
-        ctx.fail("Cannot bind ACL to VLAN and (Ethernet, PortChannel) port at same time")
 
     version_info = device_info.get_sonic_version_info()
     asic_type = version_info.get('asic_type')
@@ -107,16 +117,6 @@ def parse_acl_table_info(ctx, table_name, table_type, description, ports, stage,
 
             if p4_profile != None and p4_profile != 'y2_profile':
                 ctx.fail("MIRROR_DSCP is supported only on y2_profile.")
-
-        for port in port_list:
-            if port in valid_acl_vlans:
-                ctx.fail("VLAN is not supported as a bind point on Intel platform.")
-
-    hwsku = device_info.get_hwsku()
-    if 'Accton-AS9726-32D' in hwsku and stage == 'egress':
-        for port in port_list:
-            if port in valid_acl_vlans:
-                ctx.fail("VLAN is not supported as a bind point on Broadcom Trident4 switches.")
 
     table_info["ports@"] = ",".join(port_list)
 
