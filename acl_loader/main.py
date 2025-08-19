@@ -793,7 +793,7 @@ class AclLoader(object):
                 except AclLoaderException as ex:
                     error("Error processing rule %s: %s. Skipped." % (acl_entry_name, ex))
 
-            if not self.is_table_mirror(table_name):
+            if not self.is_table_egress(table_name):
                 deep_update(self.rules_info, self.deny_rule(table_name))
 
     def full_update(self):
